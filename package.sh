@@ -1,6 +1,8 @@
 #!/bin/bash
 # Gera dist/KickBack.app e dist/KickBack.dmg a partir de ./runtime (rode ./build-runtime.sh antes).
 # Uso: VERSION=0.1.0 ./package.sh
+#   SIGN_ID="Developer ID Application: ..."  assina com hardened runtime (sem: ad-hoc)
+#   NOTARY_PROFILE=kickback                  notariza e grampeia o .dmg (xcrun notarytool store-credentials)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -46,6 +48,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Jogos e programas do Windows podem usar o microfone (chat de voz).</string>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
@@ -94,12 +97,36 @@ python3 -I "$ROOT/tools/relocate.py" "$R/runtime" "$ROOT/runtime"
 cp "$ROOT/kb" "$ROOT/games.conf" "$R/"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$R/" 2>/dev/null || true
 
-echo "==> assinando (ad-hoc)"
-codesign --force -s - "$APP"
+if [ -n "${SIGN_ID:-}" ]; then
+  echo "==> assinando com $SIGN_ID (hardened runtime)"
+  # todo Mach-O do runtime; executáveis (wine, wineserver, gst-plugin-scanner) levam os entitlements do Wine
+  find "$R/runtime" -type f -print0 | while IFS= read -r -d '' f; do
+    case "$(file -b "$f")" in
+      *Mach-O*executable*) echo "E $f";;
+      *Mach-O*) echo "L $f";;
+    esac
+  done > "$DIST/macho.list"
+  grep '^L ' "$DIST/macho.list" | cut -c3- | tr '\n' '\0' |
+    xargs -0 -n 40 codesign -f -s "$SIGN_ID" -o runtime --timestamp
+  grep '^E ' "$DIST/macho.list" | cut -c3- | tr '\n' '\0' |
+    xargs -0 codesign -f -s "$SIGN_ID" -o runtime --timestamp --entitlements "$ROOT/app/wine.entitlements"
+  rm "$DIST/macho.list"
+  codesign -f -s "$SIGN_ID" -o runtime --timestamp --entitlements "$ROOT/app/wine.entitlements" "$APP"
+  codesign --verify --strict "$APP"
+else
+  echo "==> assinando (ad-hoc)"
+  codesign --force -s - "$APP"
+fi
 
 echo "==> dmg"
 S=$DIST/dmg; mkdir -p "$S"
 mv "$APP" "$S/"; ln -s /Applications "$S/Applications"
 hdiutil create -volname KickBack -srcfolder "$S" -ov -format ULFO "$DIST/KickBack.dmg" >/dev/null
 mv "$S/KickBack.app" "$DIST/"; rm -rf "$S"
+if [ -n "${SIGN_ID:-}" ]; then codesign -f -s "$SIGN_ID" --timestamp "$DIST/KickBack.dmg"; fi
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+  echo "==> notarizando (leva alguns minutos)"
+  xcrun notarytool submit "$DIST/KickBack.dmg" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DIST/KickBack.dmg"
+fi
 du -sh "$DIST/KickBack.app" "$DIST/KickBack.dmg"

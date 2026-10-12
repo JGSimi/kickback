@@ -35,8 +35,9 @@ final class Model: ObservableObject {
 
     let fm = FileManager.default
     let res = Bundle.main.resourceURL!
-    let home = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/KickBack")
+    // mesmo padrão do kb (que herda o ambiente)
+    let home = ProcessInfo.processInfo.environment["KB_HOME"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/KickBack")
     var bottlesDir: URL { home.appendingPathComponent("bottles") }
     var logURL: URL { home.appendingPathComponent("kickback.log") }
     func dir(_ b: String) -> URL { bottlesDir.appendingPathComponent(b) }
@@ -408,6 +409,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // teste: KICKBACK_SNAPSHOT=arquivo.png salva a janela e sai (não precisa de permissão de gravação de tela)
+        if let out = ProcessInfo.processInfo.environment["KICKBACK_SNAPSHOT"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                // CGWindowListCreateImage some do SDK em Swift; para a própria janela ainda funciona
+                typealias Grab = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+                let w = NSApp.windows.first { $0.isVisible && $0.frame.width > 300 }
+                if let w, let sym = dlsym(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW), "CGWindowListCreateImage"),
+                   let img = unsafeBitCast(sym, to: Grab.self)(.null, 1 << 3, UInt32(w.windowNumber), 1)?.takeRetainedValue() {
+                    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+                NSApp.terminate(nil)
+            }
+            return
+        }
         #if arch(arm64)
         if !FileManager.default.fileExists(atPath: "/Library/Apple/usr/share/rosetta/rosetta") {
             let a = NSAlert()
