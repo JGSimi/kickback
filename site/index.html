@@ -139,7 +139,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v13M6 11l6 6 6-6M4 21h16"/></svg>
           Baixar para macOS
         </a>
-        <p class="fine">Versão 0.1.0, download de 402 MB. macOS 13 ou mais novo.<br>
+        <p class="fine">Versão 0.1.0, download de 401 MB. macOS 13 ou mais novo.<br>
           Outras versões e código-fonte em <a href="https://github.com/JGSimi/kickback/releases">Releases</a>.</p>
       </div>
 
@@ -169,9 +169,9 @@
           <p>Abra o KickBack.dmg baixado e arraste o KickBack para a pasta Aplicativos.</p>
         </li>
         <li>
-          <h3>Libere na primeira vez</h3>
-          <p>O app não é assinado com certificado pago da Apple, então o macOS bloqueia na primeira abertura. Vá em Ajustes do Sistema, Privacidade e Segurança, e clique em Abrir Mesmo Assim. Ou rode no Terminal:</p>
-          <p><code id="cmd">xattr -dr com.apple.quarantine /Applications/KickBack.app</code></p>
+          <h3>Abra o app</h3>
+          <p>O KickBack é notarizado pela Apple e abre direto. Em Macs com Apple Silicon ele precisa do Rosetta 2; se faltar, o app avisa e mostra o comando:</p>
+          <p><code id="cmd">softwareupdate --install-rosetta --agree-to-license</code></p>
           <button class="copy" data-copy="cmd">Copiar comando</button>
         </li>
         <li>
@@ -199,7 +199,7 @@
       <details><summary>É o CrossOver?</summary><p>Não. O KickBack usa o mesmo Wine de código aberto que a CodeWeavers publica, mas não é afiliado a ela e não inclui a base de compatibilidade por jogo do CrossOver, que é paga. Se você quer suporte oficial, o CrossOver é o produto da CodeWeavers.</p></details>
       <details><summary>Meu jogo vai rodar?</summary><p>Muitos jogos DirectX 9, 10 e 11 rodam. Jogos com anti-cheat em nível de kernel, como Valorant e Fortnite, não rodam em nenhuma solução baseada em Wine. Se um jogo der problema, troque a opção de Gráficos da garrafa e teste de novo.</p></details>
       <details><summary>Funciona no meu Mac?</summary><p>Precisa do macOS 13 ou mais novo. Foi testado em Apple Silicon (M1). Nesses Macs o Rosetta 2 é obrigatório; o app avisa e mostra o comando para instalar.</p></details>
-      <details><summary>Por que o macOS diz que não pode verificar o app?</summary><p>Porque ele não é notarizado pela Apple, o que exige uma conta paga de desenvolvedor. O código está todo no GitHub para quem quiser conferir ou compilar.</p></details>
+      <details><summary>É seguro?</summary><p>O app é assinado com Developer ID e notarizado pela Apple, que verifica o pacote antes de liberar. O código está todo no GitHub para quem quiser conferir ou compilar.</p></details>
     </section>
   </main>
 

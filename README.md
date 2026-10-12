@@ -13,9 +13,7 @@ aberto que a CodeWeavers publica para o CrossOver 26.3, com as camadas gráficas
 ## Instalar
 
 1. Baixe o [`KickBack.dmg`](https://github.com/JGSimi/kickback/releases/latest/download/KickBack.dmg), abra e arraste o **KickBack** para **Aplicativos**.
-2. Na primeira vez, o macOS vai bloquear o app, porque ele não é assinado com um certificado pago da Apple.
-   Abra **Ajustes do Sistema → Privacidade e Segurança**, role até o aviso do KickBack e clique em **Abrir Mesmo Assim**.
-   Se preferir o Terminal: `xattr -dr com.apple.quarantine /Applications/KickBack.app`
+2. Abra o app. Ele é assinado com Developer ID e notarizado pela Apple, então abre sem avisos.
 3. Em Macs com Apple Silicon, o Rosetta 2 é necessário. O app avisa se faltar, e dá para instalar com
    `softwareupdate --install-rosetta --agree-to-license`.
 
@@ -46,7 +44,6 @@ Regras por jogo (backend e variáveis) ficam em `games.conf`.
 ## Limitações
 
 - Jogos com anti-cheat em nível de kernel (Valorant, Fortnite etc.) não funcionam em nenhuma camada Wine.
-- O app não é notarizado pela Apple (passo 2 da instalação).
 - A base de regras por jogo começa vazia; o CrossOver tem uma base proprietária que não pode ser copiada.
 
 ## Como funciona
@@ -66,7 +63,9 @@ Precisa do Xcode, Homebrew e `brew install mingw-w64 cmake meson ninja glslang b
 mkdir -p build/src && curl -L https://media.codeweavers.com/pub/crossover/source/crossover-sources-26.3.0.tar.gz | tar -xz -C build/src
 ./build-runtime.sh   # cerca de 1 hora
 ./test.sh            # testes do kb
-./package.sh         # dist/KickBack.dmg
+./package.sh         # dist/KickBack.dmg (ad-hoc)
+# assinado e notarizado:
+SIGN_ID="Developer ID Application: ..." NOTARY_PROFILE=kickback ./package.sh
 ```
 
 ## Licença
