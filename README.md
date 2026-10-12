@@ -2,7 +2,7 @@
 
 <h1 align="center">KickBack</h1>
 <p align="center">Jogos e programas do Windows no seu Mac. Grátis e de código aberto.</p>
-<p align="center"><a href="https://github.com/JGSimi/kickback/releases/latest/download/KickBack.dmg"><b>⬇ Baixar KickBack.dmg</b></a></p>
+<p align="center"><a href="https://github.com/JGSimi/kickback/releases/latest/download/KickBack.dmg"><b>⬇ Baixar KickBack.dmg</b></a> · <a href="https://kickback-ten.vercel.app">Site</a></p>
 
 ---
 
