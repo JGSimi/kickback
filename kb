@@ -1,0 +1,193 @@
+#!/bin/bash
+# kb — launcher de jogos Windows sobre Wine.
+# Replica o ambiente que o cxstart do CrossOver 26.3 monta (bin/wine:660-740).
+# O runtime ($KB_RUNTIME) usa o mesmo layout do CrossOver:
+#   bin/{wineloader|wine,wineserver}  lib/wine/<arch>  lib/dxvk  lib/dxmt  lib64/apple_gptk/external
+set -euo pipefail
+
+KB_HOME="${KB_HOME:-$HOME/Library/Application Support/KickBack}"
+HERE=$(cd "$(dirname "$0")" && pwd)
+RT="${KB_RUNTIME:-$HERE/runtime}"   # gerado por ./build-runtime.sh
+RULES="${KB_RULES:-$HERE/games.conf}"
+# D3DMetal (Game Porting Toolkit da Apple): não pode ser redistribuído, então vem do runtime
+# (layout CrossOver) ou do que o usuário importou com `kb import-gptk`
+GPTK=""
+for d in "$RT/lib64/apple_gptk" "$KB_HOME/apple_gptk"; do
+  [ -e "$d/external/D3DMetal.framework" ] && { GPTK=$d; break; }
+done
+
+die() { echo "kb: $*" >&2; exit 1; }
+has() { [ -e "$RT/$1" ]; }
+# Wine da CodeWeavers: o cxcompatdb.so troca o backend sozinho via CX_GRAPHICS_BACKEND
+cw() { has lib/wine/x86_64-unix/cxcompatdb.so; }
+
+usage() {
+  cat >&2 <<EOF
+uso:
+  kb create <bottle>             cria a bottle (prefixo win64)
+  kb run <bottle> <exe> [args]   roda um .exe (ou builtin: winecfg, regedit...)
+  kb env <bottle> <exe>          mostra backend, ambiente e comando, sem rodar
+  kb kill <bottle>               encerra todos os processos da bottle
+  kb import-gptk <pasta>         importa o D3DMetal de um Game Porting Toolkit montado
+variáveis: KB_RUNTIME, KB_HOME, KB_RULES, KB_BACKEND=auto|d3dmetal|dxmt|dxvk|wined3d
+EOF
+  exit 2
+}
+
+bottle_dir() {
+  case "$1" in ''|.*|*/*) die "nome de bottle inválido: '$1'";; esac
+  echo "$KB_HOME/bottles/$1"
+}
+
+setup_env() {
+  B=$(bottle_dir "$1"); [ -d "$B" ] || die "bottle '$1' não existe (kb create $1)"
+  [ -x "$RT/bin/wineserver" ] || die "runtime não encontrado em $RT (defina KB_RUNTIME)"
+  unset PYTHONPATH WINEDLLOVERRIDES
+  # bottle.env = [EnvironmentVariables] do cxbottle.conf (ex.: BACKEND=dxmt, WINEMSYNC=1)
+  set -a; . "$B/bottle.env"; set +a
+  # o app lista os atalhos .lnk sozinho; sem isso o Wine espalharia atalhos pelo macOS
+  export WINEDLLOVERRIDES="winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
+
+  export CX_ROOT="$RT" WINEPREFIX="$B/prefix" WINESERVER="$RT/bin/wineserver"
+  if [ -x "$RT/bin/wineloader" ]; then WINELOADER="$RT/bin/wineloader"; else WINELOADER="$RT/bin/wine"; fi
+  export WINELOADER
+  has lib/wine/x86_64-windows && export WINEDLLPATH="$RT/lib/wine/x86_64-windows:$RT/lib/wine"
+  if [ -n "$GPTK" ]; then
+    export CX_GPTK_DIR="$GPTK"   # lido pelo nosso cxcompatdb.so
+    [ -f "$GPTK/external/libd3dshared.dylib" ] && export CX_APPLEGPTK_LIBD3DSHARED_PATH="$GPTK/external/libd3dshared.dylib"
+  fi
+  local g; for g in lib64 lib; do   # CrossOver usa lib64; o meson instala em lib
+    if has $g/gstreamer-1.0; then
+      export GST_PLUGIN_SYSTEM_PATH="$RT/$g/gstreamer-1.0" GST_REGISTRY="$KB_HOME/gstreamer-1.0-registry.x86_64.bin"
+      # o caminho compilado aponta para a pasta de build; o app pode estar em qualquer lugar
+      [ -x "$RT/libexec/gstreamer-1.0/gst-plugin-scanner" ] && export GST_PLUGIN_SCANNER="$RT/libexec/gstreamer-1.0/gst-plugin-scanner"
+      break
+    fi
+  done
+  # o Wine faz dlopen("libfreetype.6.dylib") etc. sem caminho; procura aqui depois dos padrões
+  export DYLD_FALLBACK_LIBRARY_PATH="$RT/lib:$RT/lib64:/usr/local/lib:/usr/lib"
+  export DOTNET_EnableWriteXorExecute=0   # .NET 7/8 sob Rosetta
+  # Rosetta trata qualquer valor como "ligado"; "0"/vazio precisa virar unset
+  if [ -z "${ROSETTA_ADVERTISE_AVX+x}" ]; then export ROSETTA_ADVERTISE_AVX=1
+  elif [ -z "$ROSETTA_ADVERTISE_AVX" ] || [ "$ROSETTA_ADVERTISE_AVX" = 0 ]; then unset ROSETTA_ADVERTISE_AVX; fi
+}
+
+# games.conf: <sufixo do caminho do exe>|<backend>|<VAR=valor ...>
+# Mesmo critério do cxcompatdb (sufixo de caminho), sem diferenciar maiúsculas nem / e \.
+rule_for() {
+  [ -f "$RULES" ] || return 0
+  local exe suf back envs
+  exe=$(printf %s "$1" | tr '\\' / | tr '[:upper:]' '[:lower:]')
+  while IFS='|' read -r suf back envs; do
+    case "$suf" in ''|\#*) continue;; esac
+    suf=$(printf %s "$suf" | tr '\\' / | tr '[:upper:]' '[:lower:]')
+    case "$exe" in *"$suf") printf '%s|%s\n' "$back" "$envs"; return;; esac
+  done < "$RULES"
+}
+
+avail() {
+  case "$1" in
+    d3dmetal) cw && [ -n "$GPTK" ];;
+    dxmt) has lib/dxmt/x86_64-windows/d3d11.dll && { cw || has lib/wine/x86_64-unix/winemetal.so; };;
+    dxvk) has lib/dxvk/x86_64-windows/d3d11.dll;;
+    wined3d) true;;
+    *) false;;
+  esac
+}
+
+# ponytail: ordem fixa (D3D11+12 > D3D11 nativo Metal > Vulkan/MoltenVK); regras do games.conf decidem por jogo
+default_backend() {
+  local b; for b in d3dmetal dxmt dxvk wined3d; do avail $b && { echo $b; return; }; done
+}
+
+# O loader só carrega uma DLL builtin se existir algum arquivo com o nome dela no prefixo
+# (find_builtin_without_file em dlls/ntdll/loader.c). O wine.inf só cria fakes para o D3DMetal,
+# então o resto (ex.: winemetal.dll do DXMT) é semeado aqui; quem é builtin vem do caminho do backend.
+seed_dlls() {
+  local root pair dll dst
+  case "$1" in d3dmetal) root=$GPTK/wine;; dxmt|dxvk) root=$RT/lib/$1;; *) return 0;; esac
+  for pair in x86_64-windows:system32 i386-windows:syswow64; do
+    for dll in "$root/${pair%%:*}"/*.dll; do
+      [ -e "$dll" ] || continue
+      dst="$WINEPREFIX/drive_c/windows/${pair#*:}/${dll##*/}"
+      [ -e "$dst" ] || [ -n "${DRY:-}" ] || cp "$dll" "$dst"
+    done
+  done
+}
+
+apply_backend() {
+  local rule back extra b
+  rule=$(rule_for "$1"); back=${rule%%|*}; extra=${rule#*|}
+  b=${KB_BACKEND:-${BACKEND:-auto}}
+  [ "$b" = auto ] && b=${back:-auto}
+  [ "$b" = auto ] && b=$(default_backend)
+  avail "$b" || die "backend '$b' indisponível no runtime $RT"
+  echo "kb: backend $b" >&2
+  # ponytail: split por espaço, valores com espaço não suportados
+  if [ -n "$extra" ]; then set -f; export $extra; set +f; fi
+
+  if cw; then
+    # mesmo caminho do CrossOver: o próprio Wine carrega o backend
+    seed_dlls "$b"
+    # ponytail: valor do cxcompatdb para wined3d é desconhecido; sem a variável ele usa o padrão dele
+    [ "$b" = wined3d ] || export CX_GRAPHICS_BACKEND=$b
+    return
+  fi
+  [ "$b" = wined3d ] && return
+  # Wine sem cxcompatdb: DLLs nativas no prefixo + override n,b (como o setup_dxvk.sh)
+  local pair dir dll ov=""
+  for pair in x86_64-windows:system32 i386-windows:syswow64; do
+    dir="$RT/lib/$b/${pair%%:*}"; [ -d "$dir" ] || continue
+    for dll in "$dir"/*.dll; do
+      case "${dll##*/}" in winemetal.dll) continue;; esac   # builtin, vive em lib/wine
+      [ -n "${DRY:-}" ] || cp -f "$dll" "$WINEPREFIX/drive_c/windows/${pair#*:}/"
+      ov="$ov,$(basename "$dll" .dll)"
+    done
+  done
+  export WINEDLLOVERRIDES="${ov#,}=n,b${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
+}
+
+cmd=${1:-}; [ $# -gt 0 ] && shift
+case "$cmd" in
+  create)
+    [ $# -eq 1 ] || usage
+    B=$(bottle_dir "$1"); [ -e "$B" ] && die "bottle '$1' já existe"
+    mkdir -p "$B"
+    printf '# KEY=valor, carregado a cada run\nBACKEND=auto\n#WINEMSYNC=1\n' > "$B/bottle.env"
+    setup_env "$1"
+    WINEARCH=win64 "$WINELOADER" wineboot.exe --init
+    "$WINESERVER" -w
+    ;;
+  run)
+    [ $# -ge 2 ] || usage
+    setup_env "$1"; exe=$2; shift 2
+    apply_backend "$exe"
+    [ -f "$exe" ] && cd "$(dirname "$exe")"   # muitos jogos assumem cwd = pasta do exe
+    exec "$WINELOADER" "$exe" ${@+"$@"}
+    ;;
+  env)
+    [ $# -eq 2 ] || usage
+    DRY=1; setup_env "$1"; apply_backend "$2"
+    # builtins: o /usr/bin/env é protegido pelo SIP e some com DYLD_* (o exec do wineloader mantém)
+    for v in $(compgen -e); do
+      case "$v" in WINE*|CX_*|ROSETTA*|DOTNET*|GST_*|DXVK*|DXMT*|MTL*|DYLD_*) printf '%s=%s\n' "$v" "${!v}";; esac
+    done | sort
+    echo "$WINELOADER $2"
+    ;;
+  kill)
+    [ $# -eq 1 ] || usage
+    setup_env "$1"; "$WINESERVER" -k
+    ;;
+  import-gptk)
+    [ $# -eq 1 ] || usage
+    fw=$(find "$1" -maxdepth 6 -type d -name D3DMetal.framework -path '*/external/*' 2>/dev/null | head -1)
+    [ -n "$fw" ] || die "D3DMetal.framework não encontrado em '$1' (monte o .dmg do Game Porting Toolkit)"
+    lib=$(dirname "$(dirname "$fw")")
+    [ -d "$lib/wine/x86_64-windows" ] || die "pasta wine/ do GPTK não encontrada em $lib"
+    rm -rf "$KB_HOME/apple_gptk.tmp"; mkdir -p "$KB_HOME/apple_gptk.tmp"
+    cp -R "$lib/external" "$lib/wine" "$KB_HOME/apple_gptk.tmp/"
+    rm -rf "$KB_HOME/apple_gptk"; mv "$KB_HOME/apple_gptk.tmp" "$KB_HOME/apple_gptk"
+    echo "kb: D3DMetal importado de $lib"
+    ;;
+  *) usage;;
+esac

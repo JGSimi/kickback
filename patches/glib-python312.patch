@@ -1,0 +1,18 @@
+--- a/gio/gdbus-2.0/codegen/utils.py	2026-10-12 16:49:54
++++ b/gio/gdbus-2.0/codegen/utils.py	2026-10-12 16:49:54
+@@ -19,7 +19,7 @@
+ #
+ # Author: David Zeuthen <davidz@redhat.com>
+ 
+-import distutils.version
++import re
+ import os
+ import sys
+ 
+@@ -166,4 +166,5 @@
+         v = str(key[0])
+     else:
+         v = "0"
+-    return (distutils.version.LooseVersion(v), key[1])
++    # distutils saiu no Python 3.12; as versões aqui são numéricas (ex.: 2.78)
++    return ([int(n) for n in re.findall(r"\d+", v)], key[1])

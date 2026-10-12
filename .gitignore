@@ -1,0 +1,10 @@
+# gerados (veja build-runtime.sh e package.sh)
+/build/
+/runtime/
+/dist/
+.DS_Store
+.vercel
+__pycache__/
+*.dxvk-cache
+*_d3d11.log
+/tools/*.exe
