@@ -193,7 +193,7 @@ case "$cmd" in
   install-steam)
     [ $# -eq 1 ] || usage
     setup_env "$1"
-    steam="$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe"
+    steam="$WINEPREFIX/drive_c/Program Files (x86)/Steam/Steam.exe"
     if [ ! -f "$steam" ]; then
       url=${KB_STEAM_URL:-https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe}
       setup="$KB_HOME/cache/SteamSetup.exe"

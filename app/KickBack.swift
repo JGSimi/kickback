@@ -236,7 +236,7 @@ final class Model: ObservableObject {
     // MARK: Steam
 
     func steamExe(_ b: String) -> URL {
-        dir(b).appendingPathComponent("prefix/drive_c/Program Files (x86)/Steam/steam.exe")
+        dir(b).appendingPathComponent("prefix/drive_c/Program Files (x86)/Steam/Steam.exe")
     }
 
     func hasSteam(_ b: String) -> Bool { fm.fileExists(atPath: steamExe(b).path) }
