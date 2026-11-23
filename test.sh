@@ -62,4 +62,19 @@ echo "$o" | grep -q '^CX_GRAPHICS_BACKEND=d3dmetal$' || fail "GPTK importado -> 
 echo "$o" | grep -q "^CX_GPTK_DIR=$KB_HOME/apple_gptk$" || fail "CX_GPTK_DIR"
 "$KB" import-gptk "$T/nada" >/dev/null 2>&1 && fail "import-gptk sem GPTK deve falhar"
 
+# install-steam: download (file://), checagem de MZ e instalador falso que cria o steam.exe
+printf 'MZfake' > "$T/SteamSetup.exe"; printf '<html>erro' > "$T/erro.html"
+mkrt "$T/st"
+cat > "$T/st/bin/wineloader" <<'EOF'
+#!/bin/sh
+[ "$2" = /S ] || exit 1
+mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/steam.exe"
+EOF
+chmod +x "$T/st/bin/wineloader"
+mkdir -p "$KB_HOME/bottles/st/prefix"; echo BACKEND=auto > "$KB_HOME/bottles/st/bottle.env"
+KB_RUNTIME="$T/st" KB_STEAM_URL="file://$T/erro.html" "$KB" install-steam st >/dev/null 2>&1 && fail "html não pode passar como instalador"
+KB_RUNTIME="$T/st" KB_STEAM_URL="file://$T/SteamSetup.exe" "$KB" install-steam st >/dev/null 2>&1 || fail "install-steam"
+[ -f "$KB_HOME/bottles/st/prefix/drive_c/Program Files (x86)/Steam/steam.exe" ] || fail "steam.exe"
+KB_RUNTIME="$T/st" KB_STEAM_URL="file:///nada" "$KB" install-steam st >/dev/null 2>&1 || fail "já instalada não baixa de novo"
+
 echo OK

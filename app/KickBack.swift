@@ -233,6 +233,36 @@ final class Model: ObservableObject {
         if p.runModal() == .OK, let u = p.url { open(u) }
     }
 
+    // MARK: Steam
+
+    func steamExe(_ b: String) -> URL {
+        dir(b).appendingPathComponent("prefix/drive_c/Program Files (x86)/Steam/steam.exe")
+    }
+
+    func hasSteam(_ b: String) -> Bool { fm.fileExists(atPath: steamExe(b).path) }
+
+    /// Baixa o instalador oficial e instala na garrafa selecionada (ou cria a garrafa “Steam”), depois abre.
+    func installSteam() {
+        let b = selected ?? "Steam"
+        if hasSteam(b) { open(steamExe(b)); return }
+        work("Baixando e instalando a Steam em “\(b)”… (alguns minutos)") {
+            if !self.bottles.contains(b) {
+                self.status = "Criando a garrafa “\(b)”… (leva cerca de 1 minuto)"
+                guard await self.kb(["create", b]) == 0 else {
+                    self.status = "Falha ao criar a garrafa (veja o log)."; return
+                }
+                self.refresh()
+                self.selected = b
+                self.status = "Baixando e instalando a Steam em “\(b)”… (alguns minutos)"
+            }
+            let rc = await self.kb(["install-steam", b])
+            self.loadBottle()
+            guard rc == 0 else { self.status = "Falha ao instalar a Steam (veja o log)."; return }
+            self.status = "Steam instalada. Abrindo…"
+            self.open(self.steamExe(b))
+        }
+    }
+
     func importGPTK() {
         let p = NSOpenPanel()
         p.canChooseDirectories = true
@@ -277,6 +307,9 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                     Button("Criar minha primeira garrafa") { m.create("Padrão") }
                         .controlSize(.large).buttonStyle(.borderedProminent).disabled(m.busy)
+                    Button { m.installSteam() } label: { Label("Instalar a Steam", systemImage: "arrow.down.circle") }
+                        .controlSize(.large).disabled(m.busy)
+                        .help("Cria a garrafa “Steam”, baixa o instalador oficial da Valve e instala")
                 }
                 .padding(40)
             }
@@ -339,6 +372,27 @@ struct BottleView: View {
                     }
                     return true
                 }
+
+                HStack(spacing: 12) {
+                    Image(systemName: "gamecontroller.fill").font(.title2).foregroundStyle(.secondary)
+                    if m.hasSteam(bottle) {
+                        Text("Steam instalada nesta garrafa.")
+                        Spacer()
+                        Button { m.open(m.steamExe(bottle)) } label: { Label("Abrir Steam", systemImage: "play.fill") }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Steam").font(.headline)
+                            Text("Baixa o instalador oficial da Valve e instala nesta garrafa.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button { m.installSteam() } label: { Label("Instalar Steam", systemImage: "arrow.down.circle.fill") }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
 
                 if !m.programs.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -459,6 +513,7 @@ struct KickBackApp: App {
             CommandGroup(after: .newItem) {
                 Button("Abrir programa do Windows…") { model.chooseFile() }.keyboardShortcut("o")
                 Button("Importar D3DMetal (Game Porting Toolkit)…") { model.importGPTK() }
+                Button("Instalar Steam") { model.installSteam() }.disabled(model.busy)
             }
         }
     }
