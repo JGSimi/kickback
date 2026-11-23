@@ -21,6 +21,12 @@ aberto que a CodeWeavers publica para o CrossOver 26.3, com as camadas gráficas
 
 ## Usar
 
+Para jogos da Steam, clique em **Instalar a Steam**: o app cria a garrafa, baixa o instalador oficial da Valve e
+instala. Já tem jogos no CrossOver? Use **Importar do CrossOver…**: a garrafa é clonada com os jogos (instantâneo,
+sem ocupar espaço extra) e a do CrossOver fica como estava.
+
+Para outros programas:
+
 1. Crie uma **garrafa**: um "PC Windows" isolado onde ficam os programas.
 2. Arraste o instalador ou o jogo (`.exe`, `.msi`) para a janela.
 3. Depois de instalado, o programa aparece em **Programas instalados**. É só clicar para jogar.

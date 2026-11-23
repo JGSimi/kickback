@@ -8,7 +8,13 @@ Wine compilado por `build-runtime.sh` em `runtime/`. Detalhes em `README.md`.
 1. Teste: `./test.sh`. Se mexeu no runtime, recompile só as etapas afetadas
    (`./build-runtime.sh wine builtin shim`, por exemplo). Não edite o `build-runtime.sh` enquanto ele roda,
    porque o bash lê o script aos poucos.
-2. Gere o DMG assinado e notarizado (leva de 5 a 10 minutos):
+2. Gere o DMG assinado e notarizado (leva de 5 a 10 minutos). Se o runtime não mudou e `runtime/` não existe
+   nesta máquina, use o `repack.sh`, que reaproveita o runtime de um DMG publicado
+   (`gh release download vANTERIOR -p KickBack.dmg`):
+   ```bash
+   SIGN_ID="Developer ID Application: Joao Simi (PDA9JTMKC5)" NOTARY_PROFILE=kickback VERSION=X.Y.Z ./repack.sh KickBack-antigo.dmg
+   ```
+   Com runtime novo:
    ```bash
    SIGN_ID="Developer ID Application: Joao Simi (PDA9JTMKC5)" NOTARY_PROFILE=kickback VERSION=X.Y.Z ./package.sh
    ```
