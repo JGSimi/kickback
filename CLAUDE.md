@@ -32,6 +32,6 @@ Wine compilado por `build-runtime.sh` em `runtime/`. Detalhes em `README.md`.
    versão de algum componente (veja `THIRD_PARTY_NOTICES.md`). Para só trocar o DMG de um release
    existente: `gh release upload vX.Y.Z dist/KickBack.dmg --clobber --repo JGSimi/kickback`.
 5. Site: atualize a versão e o tamanho em `site/index.html` (texto "Versão 0.1.0, download de 401 MB.")
-   e publique com `cd site && vercel deploy --prod --yes` (projeto Vercel `kickback`, https://kickback-ten.vercel.app).
+   e publique com `cd site && vercel deploy --prod --yes` (projeto Vercel `kickback` na conta Simi's projects, https://kickback-mac.vercel.app).
    O `site/.vercelignore` impede que `.env*` seja enviado.
 6. Faça commit e push.
