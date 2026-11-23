@@ -23,6 +23,7 @@ struct Program: Identifiable, Hashable {
     var title: String? = nil
     var steamApp: String? = nil // abre com Steam.exe -applaunch <appid>
     var size: Int64? = nil
+    var cover: URL? = nil       // capa vertical (Steam)
     var name: String { title ?? id.deletingPathExtension().lastPathComponent }
 }
 
@@ -66,7 +67,8 @@ func installedPrograms(_ c: URL) -> [Program] {
             // StateFlags 4 = totalmente instalado; o 228980 são os redistribuíveis que a Steam instala sozinha
             guard let id = kv["appid"], let name = kv["name"], id != "228980",
                   let st = Int(kv["StateFlags"] ?? ""), st & 4 != 0 else { continue }
-            found.append(Program(id: u, title: name, steamApp: id, size: Int64(kv["SizeOnDisk"] ?? "")))
+            found.append(Program(id: u, title: name, steamApp: id, size: Int64(kv["SizeOnDisk"] ?? ""),
+                                 cover: steamCover(l, appid: id)))
         }
     }
     // o mesmo atalho costuma existir no menu de todos os usuários e no do usuário
@@ -377,19 +379,20 @@ struct ContentView: View {
             if let b = m.selected {
                 BottleView(bottle: b)
             } else {
-                VStack(spacing: 14) {
-                    Image(systemName: "gamecontroller.fill").font(.system(size: 54)).foregroundStyle(.secondary)
+                VStack(spacing: 16) {
+                    Image(systemName: "gamecontroller.fill").font(.system(size: 52)).foregroundStyle(.secondary)
                     Text("Bem-vindo ao KickBack").font(.title.bold())
-                    Text("Uma garrafa é um “PC Windows” isolado onde seus jogos e programas são instalados.")
-                        .foregroundStyle(.secondary)
-                    Button("Criar minha primeira garrafa") { m.create("Padrão") }
+                    Text("Jogos e programas do Windows no seu Mac.").foregroundStyle(.secondary)
+                    Button { m.installSteam() } label: { Label("Instalar a Steam", systemImage: "arrow.down.circle.fill") }
                         .controlSize(.large).buttonStyle(.borderedProminent).disabled(m.busy)
-                    Button { m.installSteam() } label: { Label("Instalar a Steam", systemImage: "arrow.down.circle") }
-                        .controlSize(.large).disabled(m.busy)
                         .help("Cria a garrafa “Steam”, baixa o instalador oficial da Valve e instala")
-                    if !m.crossoverBottles.isEmpty {
-                        Button("Importar garrafas do CrossOver…") { m.showImport = true }.disabled(m.busy)
+                    HStack(spacing: 16) {
+                        Button("Criar garrafa vazia") { m.create("Padrão") }
+                        if !m.crossoverBottles.isEmpty {
+                            Button("Importar do CrossOver…") { m.showImport = true }
+                        }
                     }
+                    .buttonStyle(.link).disabled(m.busy)
                 }
                 .padding(40)
             }
@@ -479,110 +482,186 @@ struct BottleView: View {
     @EnvironmentObject var m: Model
     let bottle: String
     @State private var dropping = false
+    @State private var showSettings = false
+
+    var driveC: URL { m.dir(bottle).appendingPathComponent("prefix/drive_c") }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text(bottle).font(.largeTitle.bold())
-
-                // área de soltar
-                VStack(spacing: 10) {
-                    Image(systemName: "arrow.down.app.fill").font(.system(size: 34))
-                    Text("Arraste um instalador ou jogo do Windows aqui").font(.headline)
-                    Text(".exe, .msi ou atalhos .lnk").font(.caption).foregroundStyle(.secondary)
-                    Button("Escolher arquivo…") { m.chooseFile() }
-                }
-                .frame(maxWidth: .infinity).padding(28)
-                .background(RoundedRectangle(cornerRadius: 14).fill(dropping ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.07)))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [7]))
-                    .foregroundStyle(dropping ? Color.accentColor : Color.secondary.opacity(0.4)))
-                .onDrop(of: [UTType.fileURL], isTargeted: $dropping) { items in
-                    for item in items {
-                        _ = item.loadObject(ofClass: URL.self) { url, _ in
-                            if let url { Task { @MainActor in m.open(url) } }
-                        }
-                    }
-                    return true
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(bottle).font(.largeTitle.bold())
+                    Text(m.programs.isEmpty ? "Nenhum programa instalado"
+                         : m.programs.count == 1 ? "1 programa" : "\(m.programs.count) programas")
+                        .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 12) {
-                    Image(systemName: "gamecontroller.fill").font(.title2).foregroundStyle(.secondary)
-                    if m.hasSteam(bottle) {
-                        Text("Steam instalada nesta garrafa.")
-                        Spacer()
-                        Button { m.open(m.steamExe(bottle)) } label: { Label("Abrir Steam", systemImage: "play.fill") }
-                            .buttonStyle(.borderedProminent)
-                    } else {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Steam").font(.headline)
-                            Text("Baixa o instalador oficial da Valve e instala nesta garrafa.")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button { m.installSteam() } label: { Label("Instalar Steam", systemImage: "arrow.down.circle.fill") }
-                            .buttonStyle(.borderedProminent)
+                if m.programs.isEmpty {
+                    emptyState
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 160), spacing: 20, alignment: .top)],
+                              alignment: .leading, spacing: 26) {
+                        ForEach(m.programs) { p in ProgramTile(program: p, driveC: driveC) }
                     }
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
-
-                if !m.programs.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Programas instalados").font(.title3.bold())
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], spacing: 10) {
-                            ForEach(m.programs) { p in
-                                Button { m.open(p) } label: {
-                                    HStack {
-                                        Image(systemName: "play.circle.fill").font(.title2)
-                                        Text(p.name).lineLimit(1)
-                                        Spacer()
-                                    }
-                                    .padding(10)
-                                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Gráficos").font(.title3.bold())
-                    Picker("Tradução DirectX", selection: Binding(get: { m.backend }, set: { m.backend = $0; m.saveBackend($0) })) {
-                        ForEach(Backend.allCases) { b in
-                            Text(b.label).tag(b)
-                        }
-                    }
-                    .frame(maxWidth: 420)
-                    Toggle("MSync (sincronização rápida, menos CPU)", isOn: Binding(get: { m.msync }, set: { m.msync = $0; m.saveMsync($0) }))
-                    if !m.hasGPTK {
-                        HStack {
-                            Image(systemName: "info.circle")
-                            Text("D3DMetal (jogos DirectX 12) precisa do Game Porting Toolkit da Apple, que não pode vir junto.")
-                                .font(.callout).foregroundStyle(.secondary)
-                            Button("Importar…") { m.importGPTK() }
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Garrafa").font(.title3.bold())
-                    HStack(spacing: 10) {
-                        Button { NSWorkspace.shared.open(m.dir(bottle).appendingPathComponent("prefix/drive_c")) } label: {
-                            Label("Abrir disco C:", systemImage: "internaldrive")
-                        }
-                        Button { m.runBuiltin("winecfg") } label: { Label("Configurações do Wine", systemImage: "gearshape") }
-                        Button { m.killAll() } label: { Label("Encerrar programas", systemImage: "stop.circle") }
-                        Button { NSWorkspace.shared.open(m.logURL) } label: { Label("Ver log", systemImage: "doc.text") }
-                    }
-                    Button(role: .destructive) { m.delete(bottle) } label: { Label("Excluir garrafa…", systemImage: "trash") }
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(.horizontal, 32).padding(.vertical, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // soltar um instalador/jogo em qualquer lugar da tela
+        .overlay {
+            if dropping {
+                RoundedRectangle(cornerRadius: 16).strokeBorder(Color.accentColor, lineWidth: 3)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Color.accentColor.opacity(0.08)))
+                    .overlay(Label("Solte para abrir em “\(bottle)”", systemImage: "arrow.down.app.fill")
+                        .font(.title3.weight(.semibold)).padding(14).background(.regularMaterial, in: Capsule()))
+                    .padding(10).allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [UTType.fileURL], isTargeted: $dropping) { items in
+            for item in items {
+                _ = item.loadObject(ofClass: URL.self) { url, _ in
+                    if let url { Task { @MainActor in m.open(url) } }
+                }
+            }
+            return true
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if m.hasSteam(bottle) {
+                    Button { m.open(m.steamExe(bottle)) } label: { Label("Abrir Steam", systemImage: "gamecontroller") }
+                        .help("Abrir a Steam")
+                } else {
+                    Button { m.installSteam() } label: { Label("Instalar Steam", systemImage: "arrow.down.circle") }
+                        .help("Baixar o instalador oficial da Valve e instalar nesta garrafa")
+                }
+                Button { m.chooseFile() } label: { Label("Instalar programa", systemImage: "plus.app") }
+                    .help("Abrir um instalador ou jogo do Windows (.exe, .msi)")
+                Button { showSettings = true } label: { Label("Ajustes", systemImage: "slider.horizontal.3") }
+                    .help("Gráficos e desempenho desta garrafa")
+                Menu {
+                    Button { NSWorkspace.shared.open(driveC) } label: { Label("Abrir disco C: no Finder", systemImage: "internaldrive") }
+                    Button { m.runBuiltin("winecfg") } label: { Label("Configurações do Wine", systemImage: "gearshape") }
+                    Button { NSWorkspace.shared.open(m.logURL) } label: { Label("Ver log", systemImage: "doc.text") }
+                    Divider()
+                    Button { m.killAll() } label: { Label("Encerrar programas", systemImage: "stop.circle") }
+                    Button(role: .destructive) { m.delete(bottle) } label: { Label("Excluir garrafa…", systemImage: "trash") }
+                } label: { Label("Mais", systemImage: "ellipsis.circle") }
+                .help("Mais opções")
+            }
+        }
+        .sheet(isPresented: $showSettings) { BottleSettings(bottle: bottle) }
         .disabled(m.busy)
         .onAppear { m.loadBottle() }
+    }
+
+    var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "arrow.down.app").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
+            Text("Arraste um instalador ou jogo do Windows para cá").font(.headline)
+            HStack(spacing: 10) {
+                Button("Escolher arquivo…") { m.chooseFile() }
+                if !m.hasSteam(bottle) {
+                    Button { m.installSteam() } label: { Label("Instalar Steam", systemImage: "arrow.down.circle.fill") }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 60)
+        .background(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [6])))
+    }
+}
+
+/// Um programa na biblioteca: capa da Steam ou o ícone do .exe, nome embaixo.
+struct ProgramTile: View {
+    @EnvironmentObject var m: Model
+    let program: Program
+    let driveC: URL
+    @State private var icon: NSImage?
+    @State private var cover: NSImage?
+    @State private var hover = false
+
+    var body: some View {
+        Button { m.open(program) } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack {
+                    if let cover {
+                        Image(nsImage: cover).resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        LinearGradient(colors: [Color.secondary.opacity(0.18), Color.secondary.opacity(0.06)],
+                                       startPoint: .top, endPoint: .bottom)
+                        Group {
+                            if let icon {
+                                Image(nsImage: icon).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                            } else {
+                                Image(systemName: "app.dashed").resizable().aspectRatio(contentMode: .fit)
+                                    .fontWeight(.ultraLight).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .frame(width: 76, height: 76)
+                        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                    }
+                    if hover {
+                        Color.black.opacity(0.35)
+                        Image(systemName: "play.fill").font(.system(size: 30)).foregroundStyle(.white)
+                    }
+                }
+                .aspectRatio(2 / 3, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.white.opacity(0.08)))
+                .shadow(color: .black.opacity(hover ? 0.35 : 0.15), radius: hover ? 12 : 5, y: hover ? 6 : 2)
+                .scaleEffect(hover ? 1.03 : 1)
+
+                Text(program.name).font(.callout.weight(.medium)).lineLimit(2).foregroundStyle(.primary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hover = h } }
+        .help(program.size.map { "\(program.name) — \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" } ?? program.name)
+        .contextMenu {
+            Button("Abrir") { m.open(program) }
+            Button("Mostrar no Finder") { NSWorkspace.shared.activateFileViewerSelecting([program.id]) }
+        }
+        .task(id: program.id) {
+            let p = program, c = driveC
+            let (ic, cv) = await Task.detached(priority: .utility) { () -> (NSImage?, NSImage?) in
+                if let u = p.cover, let img = NSImage(contentsOf: u) { return (nil, img) }
+                // jogo da Steam sem capa: tenta o ícone do .exe na pasta do jogo
+                if p.steamApp != nil { return (nil, nil) }
+                return (IconCache.icon(for: p.id, driveC: c), nil)
+            }.value
+            icon = ic; cover = cv
+        }
+    }
+}
+
+struct BottleSettings: View {
+    @EnvironmentObject var m: Model
+    @Environment(\.dismiss) private var dismiss
+    let bottle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Ajustes de “\(bottle)”").font(.headline)
+            Form {
+                Picker("Tradução DirectX", selection: Binding(get: { m.backend }, set: { m.backend = $0; m.saveBackend($0) })) {
+                    ForEach(Backend.allCases) { b in Text(b.label).tag(b) }
+                }
+                Toggle("MSync (menos uso de CPU)", isOn: Binding(get: { m.msync }, set: { m.msync = $0; m.saveMsync($0) }))
+            }
+            if !m.hasGPTK {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    Text("Jogos DirectX 12 precisam do D3DMetal, que vem no Game Porting Toolkit da Apple.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Importar…") { m.importGPTK() }
+                }
+            }
+            HStack { Spacer(); Button("OK") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }
+        .padding(22)
+        .frame(width: 440)
     }
 }
 
@@ -597,6 +676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // teste: KICKBACK_SNAPSHOT=arquivo.png salva a janela e sai (não precisa de permissão de gravação de tela)
         if let out = ProcessInfo.processInfo.environment["KICKBACK_SNAPSHOT"] {
+            NSApp.activate(ignoringOtherApps: true)   // com o Stage Manager, janela inativa vira miniatura
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 // CGWindowListCreateImage some do SDK em Swift; para a própria janela ainda funciona
                 typealias Grab = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?

@@ -21,7 +21,7 @@ hdiutil detach -quiet "$MNT"; trap - EXIT
 
 echo "==> app (universal)"
 for a in arm64 x86_64; do
-  swiftc -swift-version 5 -O -parse-as-library -target $a-apple-macos13.0 -o "$DIST/KickBack-$a" "$ROOT/app/KickBack.swift"
+  swiftc -swift-version 5 -O -parse-as-library -target $a-apple-macos13.0 -o "$DIST/KickBack-$a" "$ROOT"/app/*.swift
 done
 lipo -create -output "$APP/Contents/MacOS/KickBack" "$DIST/KickBack-arm64" "$DIST/KickBack-x86_64"
 rm "$DIST"/KickBack-arm64 "$DIST"/KickBack-x86_64
