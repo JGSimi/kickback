@@ -30,7 +30,8 @@ uso:
   kb kill <bottle>               encerra todos os processos da bottle
   kb import-gptk <pasta>         importa o D3DMetal de um Game Porting Toolkit montado
   kb import-crossover [<garrafa> [<nome>]]  lista as garrafas do CrossOver ou importa uma
-variáveis: KB_RUNTIME, KB_HOME, KB_RULES, KB_BACKEND=auto|d3dmetal|dxmt|dxvk|wined3d, KB_CROSSOVER_BOTTLES
+  kb install-steam <bottle>      baixa o instalador oficial da Steam e instala na bottle
+variáveis: KB_RUNTIME, KB_HOME, KB_RULES, KB_BACKEND=auto|d3dmetal|dxmt|dxvk|wined3d, KB_STEAM_URL, KB_CROSSOVER_BOTTLES
 EOF
   exit 2
 }
@@ -248,6 +249,26 @@ case "$cmd" in
     grep -qE '^"WineArch" *= *"win32"' "$src/cxbottle.conf" 2>/dev/null && echo "kb: aviso: garrafa de 32 bits; pode não abrir no runtime de 64 bits" >&2
     mv "$T" "$B"; trap - EXIT
     echo "kb: garrafa '${2:-$1}' importada do CrossOver"
+    ;;
+  install-steam)
+    [ $# -eq 1 ] || usage
+    setup_env "$1"
+    steam="$WINEPREFIX/drive_c/Program Files (x86)/Steam/Steam.exe"
+    if [ ! -f "$steam" ]; then
+      url=${KB_STEAM_URL:-https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe}
+      setup="$KB_HOME/cache/SteamSetup.exe"
+      mkdir -p "$KB_HOME/cache"
+      echo "kb: baixando $url"
+      curl -fL --retry 3 -o "$setup.part" "$url" || die "falha ao baixar o instalador da Steam"
+      # instalador NSIS: começa com MZ; evita rodar uma página de erro salva como .exe
+      [ "$(head -c 2 "$setup.part")" = MZ ] || die "o download não é um instalador do Windows"
+      mv -f "$setup.part" "$setup"
+      echo "kb: instalando a Steam (silencioso)"
+      "$WINELOADER" "$setup" /S || die "o instalador da Steam terminou com erro"
+      "$WINESERVER" -w
+      [ -f "$steam" ] || die "Steam não apareceu em $steam depois do instalador"
+    fi
+    echo "kb: Steam instalada em $steam"
     ;;
   *) usage;;
 esac

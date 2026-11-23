@@ -86,5 +86,19 @@ grep -qF "$(printf 'Z:%s' "$I/prefix" | sed 's|/|\\\\|g')\\\\drive_c" "$I/prefix
 "$KB" import-crossover "Meus Jogos" Cópia >/dev/null || fail "importar com outro nome"
 "$KB" import-crossover nada >/dev/null 2>&1 && fail "garrafa inexistente deve falhar"
 ls -A "$KB_HOME/bottles" | grep -q '^\.import' && fail "sobrou pasta temporária"
+# install-steam: download (file://), checagem de MZ e instalador falso que cria o steam.exe
+printf 'MZfake' > "$T/SteamSetup.exe"; printf '<html>erro' > "$T/erro.html"
+mkrt "$T/st"
+cat > "$T/st/bin/wineloader" <<'EOF'
+#!/bin/sh
+[ "$2" = /S ] || exit 1
+mkdir -p "$WINEPREFIX/drive_c/Program Files (x86)/Steam" && touch "$WINEPREFIX/drive_c/Program Files (x86)/Steam/Steam.exe"
+EOF
+chmod +x "$T/st/bin/wineloader"
+mkdir -p "$KB_HOME/bottles/st/prefix"; echo BACKEND=auto > "$KB_HOME/bottles/st/bottle.env"
+KB_RUNTIME="$T/st" KB_STEAM_URL="file://$T/erro.html" "$KB" install-steam st >/dev/null 2>&1 && fail "html não pode passar como instalador"
+KB_RUNTIME="$T/st" KB_STEAM_URL="file://$T/SteamSetup.exe" "$KB" install-steam st >/dev/null 2>&1 || fail "install-steam"
+[ -f "$KB_HOME/bottles/st/prefix/drive_c/Program Files (x86)/Steam/Steam.exe" ] || fail "steam.exe"
+KB_RUNTIME="$T/st" KB_STEAM_URL="file:///nada" "$KB" install-steam st >/dev/null 2>&1 || fail "já instalada não baixa de novo"
 
 echo OK
