@@ -297,28 +297,57 @@ final class Model: ObservableObject {
         }
     }
 
-    /// Atalho .app que o CrossOver cria em ~/Applications/CrossOver: abre o mesmo jogo da Steam numa garrafa importada.
+    /// Atalho .app que o CrossOver cria em ~/Applications/CrossOver: abre o mesmo programa na garrafa importada.
+    /// Só lê o Info.plist do atalho (nome do programa e da garrafa); o resto vem da garrafa do KickBack.
     func openCrossOverLauncher(_ url: URL) -> Bool {
         guard let info = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
               let cxBottle = info["CXHelperAppBottleName"] as? String else { return false }
         let name = info["CXOriginalMenuName"] as? String ?? url.deletingPathExtension().lastPathComponent
-        let cmd = (info["CrossOverHelperCommand"] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
-        let text = (try? String(contentsOfFile: cmd, encoding: .utf8)) ?? ""
-        guard let r = text.range(of: #"rungameid/(\d+)"#, options: .regularExpression) else {
-            status = "“\(name)” é um atalho do CrossOver. Importe a garrafa “\(cxBottle)” e abra o programa pela biblioteca."
-            return true
+        // garrafa importada daquela do CrossOver: mesmo nome ou “nome (CrossOver…)”
+        let candidates = bottles.filter { $0 == cxBottle || $0.hasPrefix("\(cxBottle) (CrossOver") }
+        func key(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+        for b in candidates {
+            let c = dir(b).appendingPathComponent("prefix/drive_c")
+            let programs = installedPrograms(c)
+            if let p = programs.first(where: { key($0.name) == key(name) }) {
+                selected = b
+                if let app = p.steamApp { launchSteamGame(app, name: p.name, in: b) } else { open(p) }
+                return true
+            }
+            // atalho .url da Steam (steam://rungameid/N) copiado junto com a garrafa
+            if let app = steamURLGame(named: name, in: c), hasSteam(b) {
+                selected = b
+                launchSteamGame(app, name: name, in: b)
+                return true
+            }
         }
-        let app = String(text[r].dropFirst("rungameid/".count))
-        // garrafa importada daquela do CrossOver (mesmo nome ou “nome (CrossOver)”) que tenha a Steam
-        let candidates = bottles.filter { ($0 == cxBottle || $0.hasPrefix("\(cxBottle) (CrossOver")) && hasSteam($0) }
-        guard let b = candidates.first else {
-            status = "“\(name)” está na garrafa “\(cxBottle)” do CrossOver. Importe essa garrafa primeiro (Arquivo → Importar do CrossOver…)."
-            showImport = true
-            return true
-        }
-        selected = b
-        launchSteamGame(app, name: name, in: b)
+        status = candidates.isEmpty
+            ? "“\(name)” está na garrafa “\(cxBottle)” do CrossOver. Importe essa garrafa primeiro."
+            : "Não achei “\(name)” na garrafa importada. Abra pela biblioteca."
+        if candidates.isEmpty { showImport = true }
         return true
+    }
+
+    /// Procura <nome>.url no Menu Iniciar/Área de Trabalho da garrafa e devolve o appid do steam://rungameid/N.
+    func steamURLGame(named name: String, in c: URL) -> String? {
+        let e = fm.enumerator(at: c.appendingPathComponent("users"), includingPropertiesForKeys: nil)
+        var roots = [c.appendingPathComponent("ProgramData/Microsoft/Windows/Start Menu")]
+        while let u = e?.nextObject() as? URL {
+            if e!.level >= 2 { e!.skipDescendants() }
+            if e!.level == 1 { roots += [u.appendingPathComponent("Desktop"),
+                                         u.appendingPathComponent("AppData/Roaming/Microsoft/Windows/Start Menu")] }
+        }
+        for r in roots {
+            let f = fm.enumerator(at: r, includingPropertiesForKeys: nil)
+            while let u = f?.nextObject() as? URL {
+                guard u.pathExtension.lowercased() == "url",
+                      u.deletingPathExtension().lastPathComponent.lowercased() == name.lowercased(),
+                      let t = try? String(contentsOf: u, encoding: .utf8),
+                      let r = t.range(of: #"rungameid/\d+"#, options: .regularExpression) else { continue }
+                return String(t[r].dropFirst("rungameid/".count))
+            }
+        }
+        return nil
     }
 
     func runBuiltin(_ exe: String) {
