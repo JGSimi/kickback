@@ -14,7 +14,8 @@ Wine compilado por `build-runtime.sh` em `runtime/`. Detalhes em `README.md`.
    ```bash
    SIGN_ID="Developer ID Application: Joao Simi (PDA9JTMKC5)" NOTARY_PROFILE=kickback VERSION=X.Y.Z ./repack.sh KickBack-antigo.dmg
    ```
-   Com runtime novo:
+   O `repack.sh` também recompila e assina o `cxcompatdb.c` (é código nosso, ex.: o ajuste que faz a tela da
+   Steam aparecer). Com runtime novo:
    ```bash
    SIGN_ID="Developer ID Application: Joao Simi (PDA9JTMKC5)" NOTARY_PROFILE=kickback VERSION=X.Y.Z ./package.sh
    ```

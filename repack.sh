@@ -28,7 +28,12 @@ rm "$DIST"/KickBack-arm64 "$DIST"/KickBack-x86_64
 cp "$ROOT/kb" "$ROOT/games.conf" "$ROOT/THIRD_PARTY_NOTICES.md" "$R/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
 
-echo "==> assinando com $SIGN_ID (o runtime mantém as assinaturas do DMG antigo)"
+echo "==> cxcompatdb.so (é código nosso, não do runtime compilado)"
+SHIM=$R/runtime/lib/wine/x86_64-unix/cxcompatdb.so
+clang -arch x86_64 -O2 -dynamiclib -o "$SHIM" "$ROOT/cxcompatdb.c"
+codesign -f -s "$SIGN_ID" -o runtime --timestamp "$SHIM"
+
+echo "==> assinando com $SIGN_ID (o resto do runtime mantém as assinaturas do DMG antigo)"
 codesign -f -s "$SIGN_ID" -o runtime --timestamp --entitlements "$ROOT/app/wine.entitlements" "$APP"
 codesign --verify --strict --deep "$APP"
 
