@@ -19,8 +19,60 @@ enum Backend: String, CaseIterable, Identifiable {
 }
 
 struct Program: Identifiable, Hashable {
-    let id: URL
-    var name: String { id.deletingPathExtension().lastPathComponent }
+    let id: URL                 // atalho .lnk, ou o appmanifest de um jogo da Steam
+    var title: String? = nil
+    var steamApp: String? = nil // abre com Steam.exe -applaunch <appid>
+    var size: Int64? = nil
+    var name: String { title ?? id.deletingPathExtension().lastPathComponent }
+}
+
+/// Programas de um drive_c: atalhos .lnk do Menu Iniciar e jogos instalados pela Steam (appmanifest_*.acf).
+/// A Steam cria atalhos .url steam://, que não abrem sem ela; o appmanifest tem nome, tamanho e estado.
+func installedPrograms(_ c: URL) -> [Program] {
+    let fm = FileManager.default
+    var roots = [c.appendingPathComponent("ProgramData/Microsoft/Windows/Start Menu/Programs")]
+    for u in (try? fm.contentsOfDirectory(atPath: c.appendingPathComponent("users").path)) ?? [] {
+        roots.append(c.appendingPathComponent("users/\(u)/AppData/Roaming/Microsoft/Windows/Start Menu/Programs"))
+    }
+    var found: [Program] = []
+    for r in roots {
+        let e = fm.enumerator(at: r, includingPropertiesForKeys: nil)
+        while let u = e?.nextObject() as? URL {
+            let n = u.lastPathComponent.lowercased()
+            if u.pathExtension.lowercased() == "lnk", !n.contains("uninstall"), !n.contains("desinstal") {
+                found.append(Program(id: u))
+            }
+        }
+    }
+    // bibliotecas da Steam: a padrão e as do libraryfolders.vdf que ficam no C:
+    let steamapps = c.appendingPathComponent("Program Files (x86)/Steam/steamapps")
+    var libs = [steamapps]
+    let vdf = (try? String(contentsOf: steamapps.appendingPathComponent("libraryfolders.vdf"), encoding: .utf8)) ?? ""
+    for line in vdf.components(separatedBy: "\n") {
+        let f = line.components(separatedBy: "\"")
+        guard f.count >= 4, f[1] == "path", f[3].lowercased().hasPrefix("c:\\\\") else { continue }
+        let rel = f[3].dropFirst(4).replacingOccurrences(of: "\\\\", with: "/")
+        let l = c.appendingPathComponent(rel).appendingPathComponent("steamapps")
+        if !libs.contains(where: { $0.standardizedFileURL.path.lowercased() == l.standardizedFileURL.path.lowercased() }) { libs.append(l) }
+    }
+    for l in libs {
+        for f in (try? fm.contentsOfDirectory(atPath: l.path)) ?? [] where f.hasPrefix("appmanifest_") && f.hasSuffix(".acf") {
+            let u = l.appendingPathComponent(f)
+            var kv: [String: String] = [:]
+            for line in ((try? String(contentsOf: u, encoding: .utf8)) ?? "").components(separatedBy: "\n") {
+                let q = line.components(separatedBy: "\"")
+                if q.count >= 4, kv[q[1]] == nil { kv[q[1]] = q[3] }
+            }
+            // StateFlags 4 = totalmente instalado; o 228980 são os redistribuíveis que a Steam instala sozinha
+            guard let id = kv["appid"], let name = kv["name"], id != "228980",
+                  let st = Int(kv["StateFlags"] ?? ""), st & 4 != 0 else { continue }
+            found.append(Program(id: u, title: name, steamApp: id, size: Int64(kv["SizeOnDisk"] ?? "")))
+        }
+    }
+    // o mesmo atalho costuma existir no menu de todos os usuários e no do usuário
+    var seen = Set<String>()
+    return found.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        .filter { seen.insert($0.name.lowercased()).inserted }
 }
 
 @MainActor
@@ -193,27 +245,8 @@ final class Model: ObservableObject {
         }
     }
 
-    // atalhos .lnk do Menu Iniciar criados pelos instaladores
     func loadPrograms(_ b: String) {
-        let c = dir(b).appendingPathComponent("prefix/drive_c")
-        var roots = [c.appendingPathComponent("ProgramData/Microsoft/Windows/Start Menu/Programs")]
-        for u in (try? fm.contentsOfDirectory(atPath: c.appendingPathComponent("users").path)) ?? [] {
-            roots.append(c.appendingPathComponent("users/\(u)/AppData/Roaming/Microsoft/Windows/Start Menu/Programs"))
-        }
-        var found = Set<URL>()
-        for r in roots {
-            let e = fm.enumerator(at: r, includingPropertiesForKeys: nil)
-            while let u = e?.nextObject() as? URL {
-                let n = u.lastPathComponent.lowercased()
-                if u.pathExtension.lowercased() == "lnk", !n.contains("uninstall"), !n.contains("desinstal") {
-                    found.insert(u)
-                }
-            }
-        }
-        // o mesmo atalho costuma existir no menu de todos os usuários e no do usuário
-        var seen = Set<String>()
-        programs = found.map(Program.init).sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
-            .filter { seen.insert($0.name.lowercased()).inserted }
+        programs = installedPrograms(dir(b).appendingPathComponent("prefix/drive_c"))
     }
 
     // MARK: executar
@@ -239,6 +272,15 @@ final class Model: ObservableObject {
             status = rc == 0 ? "\(url.deletingPathExtension().lastPathComponent) foi fechado."
                              : "\(url.deletingPathExtension().lastPathComponent) terminou com erro \(rc) (veja o log)."
             if selected == b { loadPrograms(b) }
+        }
+    }
+
+    func open(_ p: Program) {
+        guard let app = p.steamApp, let b = selected else { open(p.id); return }
+        status = "Abrindo \(p.name) pela Steam em “\(b)”…"
+        Task {
+            let rc = await kb(["run", b, steamExe(b).path, "-applaunch", app])
+            status = rc == 0 ? "Steam fechada." : "A Steam terminou com erro \(rc) (veja o log)."
         }
     }
 
@@ -396,10 +438,27 @@ struct ImportCrossOverView: View {
                 Text("Nenhuma garrafa encontrada em \(m.crossoverDir.path).").foregroundStyle(.secondary)
             } else {
                 ForEach(list, id: \.self) { b in
-                    HStack {
-                        Label(b, systemImage: "shippingbox")
-                        Spacer()
-                        Button("Importar") { dismiss(); m.importCrossOver(b) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Label(b, systemImage: "shippingbox").font(.headline)
+                            Spacer()
+                            Button("Importar") { dismiss(); m.importCrossOver(b) }
+                        }
+                        let ps = installedPrograms(m.crossoverDir.appendingPathComponent("\(b)/drive_c"))
+                        if ps.isEmpty {
+                            Text("Nenhum programa encontrado no Menu Iniciar.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(ps) { p in
+                            HStack {
+                                Image(systemName: p.steamApp == nil ? "app" : "gamecontroller").foregroundStyle(.secondary)
+                                Text(p.name)
+                                Spacer()
+                                if let n = p.size, n > 0 {
+                                    Text(ByteCountFormatter.string(fromByteCount: n, countStyle: .file)).foregroundStyle(.secondary)
+                                }
+                            }
+                            .font(.callout)
+                        }
                     }
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
@@ -411,7 +470,7 @@ struct ImportCrossOverView: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(width: 460)
         .disabled(m.busy)
     }
 }
@@ -472,7 +531,7 @@ struct BottleView: View {
                         Text("Programas instalados").font(.title3.bold())
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], spacing: 10) {
                             ForEach(m.programs) { p in
-                                Button { m.open(p.id) } label: {
+                                Button { m.open(p) } label: {
                                     HStack {
                                         Image(systemName: "play.circle.fill").font(.title2)
                                         Text(p.name).lineLimit(1)
