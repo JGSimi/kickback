@@ -57,20 +57,31 @@ static int contains(const ustr *s, const char *needle)
     return 0;
 }
 
-/* Mesmo ajuste que o CrossOver faz ("Hack 13322"): o processo principal da tela da Steam (CEF)
- * desenha num processo de GPU separado, e o Wine no Mac não mostra o que um processo desenha na
- * janela de outro, então a Steam fica preta. Com --in-process-gpu tudo acontece no mesmo processo. */
-static void append_cmdline(void)
+/* Regras por programa, as mesmas que o CrossOver aplica (vistas no log dele com
+ * `wine --bottle X --cx-log f --debugmsg +cxcompatdb`; o banco dele é fechado).
+ *  - Telas web (CEF) desenham num processo de GPU separado, e o Wine no Mac não mostra o que um
+ *    processo desenha na janela de outro: --in-process-gpu põe tudo no mesmo processo.
+ *  - main_only: só o processo principal (sem --type=), como o CrossOver faz com a Steam. */
+static const struct rule { const char *exe, *append; int main_only; const char *backend; } rules[] = {
+    /* "Hack 13322": tela da Steam */
+    { "\\steamwebhelper.exe", " --no-sandbox --in-process-gpu --disable-gpu", 1, NULL },
+    /* "Hack 18582: Rockstar launcher": tela do Rockstar Games Launcher / Social Club */
+    { "\\SocialClubHelper.exe", " --in-process-gpu --use-gl=angle --use-angle=swiftshader", 0, NULL },
+    /* "Bug 23348": o Rockstar Games Launcher só abre com WineD3D */
+    { "\\Rockstar Games\\Launcher\\Launcher.exe", NULL, 0, "wined3d" },
+    /* "Hack 24279": GTA V Enhanced sem o BattlEye (anti-cheat do modo online, que não roda no Wine) */
+    { "\\PlayGTAV.exe", " -nobattleye", 0, NULL },
+};
+
+/* Aplica as regras ao processo atual; devolve o backend gráfico forçado pela regra, se houver. */
+static const char *apply_rules(void)
 {
-    static const struct { const char *exe, *append; } rules[] = {
-        { "\\steamwebhelper.exe", " --no-sandbox --in-process-gpu --disable-gpu" },
-    };
     void *(*teb_fn)(void) = (void *(*)(void))ntdll_sym("NtCurrentTeb");
     char *teb, *peb, *params;
     ustr *image, *cmd;
 
-    if (getenv("KB_NO_CMDLINE_HACKS") || !teb_fn || !(teb = teb_fn())) return;
-    if (!(peb = *(char **)(teb + 0x60)) || !(params = *(char **)(peb + 0x20))) return;
+    if (getenv("KB_NO_CMDLINE_HACKS") || !teb_fn || !(teb = teb_fn())) return NULL;
+    if (!(peb = *(char **)(teb + 0x60)) || !(params = *(char **)(peb + 0x20))) return NULL;
     image = (ustr *)(params + 0x60);
     cmd = (ustr *)(params + 0x70);
     if (getenv("KB_CX_DEBUG"))
@@ -84,27 +95,34 @@ static void append_cmdline(void)
             fclose(f);
         }
     }
-    if (!cmd->Buffer) return;
+    if (!cmd->Buffer) return NULL;
     for (size_t r = 0; r < sizeof(rules) / sizeof(rules[0]); r++)
     {
-        size_t old = cmd->Length / 2, add = strlen(rules[r].append);
-        unsigned short *buf;
-        if (!ends_with_ci(image, rules[r].exe) || contains(cmd, "--type=")) continue;  /* só o processo principal */
-        if (!(buf = malloc((old + add + 1) * 2))) return;                                /* nunca liberado */
-        memcpy(buf, cmd->Buffer, old * 2);
-        for (size_t i = 0; i < add; i++) buf[old + i] = (unsigned char)rules[r].append[i];
-        buf[old + add] = 0;
-        cmd->Buffer = buf;
-        cmd->Length = (unsigned short)((old + add) * 2);
-        cmd->MaximumLength = (unsigned short)((old + add + 1) * 2);
-        return;
+        const struct rule *ru = &rules[r];
+        if (!ends_with_ci(image, ru->exe) || (ru->main_only && contains(cmd, "--type="))) continue;
+        if (ru->append)
+        {
+            size_t old = cmd->Length / 2, add = strlen(ru->append);
+            unsigned short *buf = malloc((old + add + 1) * 2);   /* nunca liberado */
+            if (buf)
+            {
+                memcpy(buf, cmd->Buffer, old * 2);
+                for (size_t i = 0; i < add; i++) buf[old + i] = (unsigned char)ru->append[i];
+                buf[old + add] = 0;
+                cmd->Buffer = buf;
+                cmd->Length = (unsigned short)((old + add) * 2);
+                cmd->MaximumLength = (unsigned short)((old + add + 1) * 2);
+            }
+        }
+        return ru->backend;
     }
+    return NULL;
 }
 
 __attribute__((constructor)) static void init(void)
 {
-    append_cmdline();
-    const char *b = getenv("CX_GRAPHICS_BACKEND"), *root = getenv("CX_ROOT"), *sub = NULL;
+    const char *forced = apply_rules();
+    const char *b = forced ? forced : getenv("CX_GRAPHICS_BACKEND"), *root = getenv("CX_ROOT"), *sub = NULL;
     void (*prepend)(const char *);
     char *dir;
 
