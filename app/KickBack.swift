@@ -32,6 +32,7 @@ final class Model: ObservableObject {
     @Published var programs: [Program] = []
     @Published var status = ""
     @Published var busy = false
+    @Published var showImport = false
 
     let fm = FileManager.default
     let res = Bundle.main.resourceURL!
@@ -112,6 +113,31 @@ final class Model: ObservableObject {
         }
     }
 
+    // garrafas do CrossOver (mesmo padrão do kb import-crossover)
+    var crossoverDir: URL {
+        ProcessInfo.processInfo.environment["KB_CROSSOVER_BOTTLES"].map { URL(fileURLWithPath: $0) }
+            ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/CrossOver/Bottles")
+    }
+    var crossoverBottles: [String] {
+        ((try? fm.contentsOfDirectory(atPath: crossoverDir.path)) ?? [])
+            .filter { !$0.hasPrefix(".") && fm.fileExists(atPath: crossoverDir.appendingPathComponent("\($0)/drive_c").path) }
+            .sorted()
+    }
+
+    func importCrossOver(_ cx: String) {
+        var n = cx
+        if fm.fileExists(atPath: dir(n).path) { n = "\(cx) (CrossOver)" }
+        var i = 2
+        while fm.fileExists(atPath: dir(n).path) { n = "\(cx) (CrossOver \(i))"; i += 1 }
+        work("Importando “\(cx)” do CrossOver… (é uma cópia por clonagem: rápida e sem ocupar espaço extra)") {
+            let rc = await self.kb(["import-crossover", cx, n])
+            self.status = rc == 0 ? "Garrafa “\(n)” importada do CrossOver. A do CrossOver continua intacta."
+                                  : "Falha ao importar “\(cx)” (está aberta no CrossOver? veja o log)."
+            self.refresh()
+            if rc == 0 { self.selected = n }
+        }
+    }
+
     func delete(_ b: String) {
         let a = NSAlert()
         a.messageText = "Mover a garrafa “\(b)” para a Lixeira?"
@@ -184,7 +210,10 @@ final class Model: ObservableObject {
                 }
             }
         }
+        // o mesmo atalho costuma existir no menu de todos os usuários e no do usuário
+        var seen = Set<String>()
         programs = found.map(Program.init).sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+            .filter { seen.insert($0.name.lowercased()).inserted }
     }
 
     // MARK: executar
@@ -266,6 +295,12 @@ struct ContentView: View {
                 Button { newName = ""; showNew = true } label: { Label("Nova garrafa", systemImage: "plus") }
                     .help("Nova garrafa")
             }
+            .safeAreaInset(edge: .bottom) {
+                if !m.crossoverBottles.isEmpty {
+                    Button { m.showImport = true } label: { Label("Importar do CrossOver…", systemImage: "square.and.arrow.down") }
+                        .buttonStyle(.borderless).padding(10).disabled(m.busy)
+                }
+            }
         } detail: {
             if let b = m.selected {
                 BottleView(bottle: b)
@@ -277,6 +312,9 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                     Button("Criar minha primeira garrafa") { m.create("Padrão") }
                         .controlSize(.large).buttonStyle(.borderedProminent).disabled(m.busy)
+                    if !m.crossoverBottles.isEmpty {
+                        Button("Importar garrafas do CrossOver…") { m.showImport = true }.disabled(m.busy)
+                    }
                 }
                 .padding(40)
             }
@@ -307,6 +345,41 @@ struct ContentView: View {
             }
             .padding(20)
         }
+        .sheet(isPresented: $m.showImport) { ImportCrossOverView() }
+    }
+}
+
+struct ImportCrossOverView: View {
+    @EnvironmentObject var m: Model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Importar do CrossOver").font(.headline)
+            Text("A garrafa é clonada para o KickBack com os jogos instalados. A do CrossOver não é alterada, e a cópia não ocupa espaço extra no disco.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            let list = m.crossoverBottles
+            if list.isEmpty {
+                Text("Nenhuma garrafa encontrada em \(m.crossoverDir.path).").foregroundStyle(.secondary)
+            } else {
+                ForEach(list, id: \.self) { b in
+                    HStack {
+                        Label(b, systemImage: "shippingbox")
+                        Spacer()
+                        Button("Importar") { dismiss(); m.importCrossOver(b) }
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Fechar") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .disabled(m.busy)
     }
 }
 
@@ -459,6 +532,7 @@ struct KickBackApp: App {
             CommandGroup(after: .newItem) {
                 Button("Abrir programa do Windows…") { model.chooseFile() }.keyboardShortcut("o")
                 Button("Importar D3DMetal (Game Porting Toolkit)…") { model.importGPTK() }
+                Button("Importar do CrossOver…") { model.showImport = true }
             }
         }
     }

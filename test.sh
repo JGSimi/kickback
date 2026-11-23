@@ -62,4 +62,29 @@ echo "$o" | grep -q '^CX_GRAPHICS_BACKEND=d3dmetal$' || fail "GPTK importado -> 
 echo "$o" | grep -q "^CX_GPTK_DIR=$KB_HOME/apple_gptk$" || fail "CX_GPTK_DIR"
 "$KB" import-gptk "$T/nada" >/dev/null 2>&1 && fail "import-gptk sem GPTK deve falhar"
 
+# garrafa falsa do CrossOver
+export KB_CROSSOVER_BOTTLES="$T/cx"
+X="$KB_CROSSOVER_BOTTLES/Meus Jogos"
+mkdir -p "$X/dosdevices" "$X/windata" "$X/drive_c/ProgramData/Microsoft/Windows/Start Menu/Programs/Jogo"
+touch "$X/drive_c/ProgramData/Microsoft/Windows/Start Menu/Programs/Jogo/Jogo.lnk" "$X/cxmenu.conf"
+ln -s ../drive_c "$X/dosdevices/c:"; ln -s / "$X/dosdevices/z:"; ln -s "$X/drive_c/ProgramData" "$X/dosdevices/p:"
+W=$(printf 'Z:%s' "$X" | sed 's|/|\\\\|g')
+printf '[Software\\\\Jogo]\n"Dir"="%s\\\\drive_c"\n' "$W" > "$X/user.reg"; echo 'WINE REGISTRY' > "$X/system.reg"
+printf '[Bottle]\n"WineArch" = "win64"\n[EnvironmentVariables]\n"WINEMSYNC" = "1"\n"CX_GRAPHICS_BACKEND" = "dxmt"\n"CX_BOTTLE_CREATOR_APPID" = "x"\n"FOO" = "a b"\n[Outra]\n"BAR" = "1"\n' > "$X/cxbottle.conf"
+[ "$("$KB" import-crossover)" = "Meus Jogos" ] || fail "listar garrafas do CrossOver"
+"$KB" import-crossover "Meus Jogos" >/dev/null || fail "import-crossover"
+I="$KB_HOME/bottles/Meus Jogos"
+[ -f "$I/prefix/drive_c/ProgramData/Microsoft/Windows/Start Menu/Programs/Jogo/Jogo.lnk" ] || fail "drive_c importado"
+[ "$(readlink "$I/prefix/dosdevices/c:")" = ../drive_c ] || fail "link relativo"
+[ "$(readlink "$I/prefix/dosdevices/p:")" = "$I/prefix/drive_c/ProgramData" ] || fail "link absoluto para a garrafa"
+grep -qF "$(printf 'Z:%s' "$I/prefix" | sed 's|/|\\\\|g')\\\\drive_c" "$I/prefix/user.reg" || fail "caminho no registro: $(cat "$I/prefix/user.reg")"
+[ -e "$I/prefix/cxmenu.conf" ] || [ -e "$I/prefix/windata" ] && fail "arquivos do CrossOver não devem ir"
+( set -a; . "$I/bottle.env"; [ "$BACKEND" = dxmt ] && [ "$WINEMSYNC" = 1 ] && [ "$FOO" = "a b" ] && [ -z "${BAR:-}" ] \
+  && [ -z "${CX_BOTTLE_CREATOR_APPID:-}" ] ) || fail "bottle.env: $(cat "$I/bottle.env")"
+[ -f "$X/cxmenu.conf" ] && [ -L "$X/dosdevices/p:" ] && grep -qF "$W" "$X/user.reg" || fail "garrafa do CrossOver alterada"
+"$KB" import-crossover "Meus Jogos" >/dev/null 2>&1 && fail "importar por cima deve falhar"
+"$KB" import-crossover "Meus Jogos" Cópia >/dev/null || fail "importar com outro nome"
+"$KB" import-crossover nada >/dev/null 2>&1 && fail "garrafa inexistente deve falhar"
+ls -A "$KB_HOME/bottles" | grep -q '^\.import' && fail "sobrou pasta temporária"
+
 echo OK

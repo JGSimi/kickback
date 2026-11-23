@@ -29,7 +29,8 @@ uso:
   kb env <bottle> <exe>          mostra backend, ambiente e comando, sem rodar
   kb kill <bottle>               encerra todos os processos da bottle
   kb import-gptk <pasta>         importa o D3DMetal de um Game Porting Toolkit montado
-variáveis: KB_RUNTIME, KB_HOME, KB_RULES, KB_BACKEND=auto|d3dmetal|dxmt|dxvk|wined3d
+  kb import-crossover [<garrafa> [<nome>]]  lista as garrafas do CrossOver ou importa uma
+variáveis: KB_RUNTIME, KB_HOME, KB_RULES, KB_BACKEND=auto|d3dmetal|dxmt|dxvk|wined3d, KB_CROSSOVER_BOTTLES
 EOF
   exit 2
 }
@@ -188,6 +189,65 @@ case "$cmd" in
     cp -R "$lib/external" "$lib/wine" "$KB_HOME/apple_gptk.tmp/"
     rm -rf "$KB_HOME/apple_gptk"; mv "$KB_HOME/apple_gptk.tmp" "$KB_HOME/apple_gptk"
     echo "kb: D3DMetal importado de $lib"
+    ;;
+  import-crossover)
+    # A garrafa do CrossOver já é um WINEPREFIX do mesmo Wine 26.3. Ela é clonada (clonefile do APFS:
+    # instantâneo e sem ocupar espaço até alguém mudar um arquivo) em vez de usada no lugar, porque rodar
+    # o nosso Wine nela atualizaria o prefixo (wineboot, registro) por baixo do CrossOver.
+    CXB="${KB_CROSSOVER_BOTTLES:-$HOME/Library/Application Support/CrossOver/Bottles}"
+    if [ $# -eq 0 ]; then
+      for d in "$CXB"/*/; do [ -d "$d/drive_c" ] && basename "$d"; done
+      exit 0
+    fi
+    [ $# -le 2 ] || usage
+    case "$1" in ''|.*|*/*) die "nome de garrafa do CrossOver inválido: '$1'";; esac
+    src="$CXB/$1"; [ -d "$src/drive_c" ] || die "garrafa do CrossOver '$1' não encontrada em $CXB"
+    B=$(bottle_dir "${2:-$1}"); [ -e "$B" ] && die "bottle '${2:-$1}' já existe (kb import-crossover '$1' <outro nome>)"
+    # com o wineserver do CrossOver ativo o registro sairia pela metade (socket: /tmp/.wine-<uid>/server-<dev>-<ino>)
+    read -r dev ino < <(stat -f '%d %i' "$src")
+    [ -S "$(printf '/tmp/.wine-%s/server-%x-%x/socket' "$(id -u)" "$dev" "$ino")" ] && pgrep -qx wineserver \
+      && die "a garrafa '$1' está em uso no CrossOver; feche os programas dela e tente de novo"
+    T="$KB_HOME/bottles/.import-$$"; rm -rf "$T"; mkdir -p "$T/prefix"
+    trap 'rm -rf "$T"' EXIT
+    if cp -c "$src/system.reg" "$T/.probe" 2>/dev/null; then cpf=(cp -c -R)
+    else   # outro volume ou sem APFS: cópia de verdade
+      need=$(du -sk "$src" | cut -f1); free=$(df -k "$T" | awk 'NR==2{print $4}')
+      [ "$need" -lt "$free" ] || die "espaço insuficiente: a garrafa ocupa $((need / 1048576)) GB"
+      cpf=(cp -pR)
+    fi
+    rm -f "$T/.probe"
+    echo "kb: importando '$1' de $src (${cpf[*]})"
+    for f in "$src"/* "$src"/.update-timestamp; do
+      case "${f##*/}" in cx*.conf*|desktopdata|windata) continue;; esac   # menus e associações do CrossOver
+      [ -e "$f" ] || [ -L "$f" ] || continue
+      "${cpf[@]}" "$f" "$T/prefix/"
+    done
+    # links e caminhos Z:\ que apontavam para dentro da garrafa do CrossOver passam a apontar para a cópia
+    while IFS= read -r l; do
+      t=$(readlink "$l")
+      case "$t" in "$src"|"$src"/*) ln -sfn "$B/prefix${t#"$src"}" "$l";; esac
+    done < <(find "$T/prefix/dosdevices" "$T/prefix/drive_c/users" -type l 2>/dev/null)
+    winpath() { printf 'Z:%s' "$1" | sed 's|/|\\\\|g'; }   # formato do .reg: barras invertidas duplicadas
+    for r in "$T"/prefix/*.reg; do
+      grep -qiF "$(winpath "$src")" "$r" 2>/dev/null || continue
+      FROM=$(winpath "$src") TO=$(winpath "$B/prefix") perl -pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/gi' "$r"
+    done
+    # [EnvironmentVariables] do cxbottle.conf -> bottle.env; CX_GRAPHICS_BACKEND vira BACKEND
+    # (d3dmetal vira auto: o auto já escolhe o D3DMetal quando o GPTK foi importado, e cai no DXMT se não)
+    back=auto; envs=""
+    while IFS= read -r line; do
+      [[ $line =~ ^\"([A-Za-z_][A-Za-z0-9_]*)\"[[:space:]]*=[[:space:]]*\"(.*)\"[[:space:]]*$ ]] || continue
+      k=${BASH_REMATCH[1]}; v=${BASH_REMATCH[2]}
+      case "$k" in
+        CX_GRAPHICS_BACKEND) case "$v" in dxmt|dxvk|wined3d) back=$v;; esac;;
+        CX_*) ;;   # CX_BOTTLE_CREATOR_APPID etc. são do próprio CrossOver
+        *) envs+=$(printf '%s=%q' "$k" "$v")$'\n';;
+      esac
+    done < <(sed -n '/^\[EnvironmentVariables\]/,/^\[/p' "$src/cxbottle.conf" 2>/dev/null)
+    printf '# KEY=valor, carregado a cada run (importada do CrossOver: %s)\nBACKEND=%s\n%s' "$1" "$back" "$envs" > "$T/bottle.env"
+    grep -qE '^"WineArch" *= *"win32"' "$src/cxbottle.conf" 2>/dev/null && echo "kb: aviso: garrafa de 32 bits; pode não abrir no runtime de 64 bits" >&2
+    mv "$T" "$B"; trap - EXIT
+    echo "kb: garrafa '${2:-$1}' importada do CrossOver"
     ;;
   *) usage;;
 esac
