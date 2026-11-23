@@ -105,7 +105,7 @@ KB_RUNTIME="$T/st" KB_STEAM_URL="file:///nada" "$KB" install-steam st >/dev/null
 mkrt "$T/echo" lib/dxmt/x86_64-windows/d3d11.dll lib/wine/x86_64-unix/cxcompatdb.so
 printf '#!/bin/sh\necho "ARGS $*"\n' > "$T/echo/bin/wineloader"; chmod +x "$T/echo/bin/wineloader"
 o=$(KB_RUNTIME="$T/echo" "$KB" run b2 'C:\Program Files (x86)\Steam\Steam.exe' -applaunch 5 2>/dev/null)
-echo "$o" | grep -q 'ARGS .*Steam.exe -applaunch 5 -cef-disable-gpu -cef-disable-gpu-compositing$' || fail "args da Steam: $o"
+echo "$o" | grep -q 'ARGS .*Steam.exe -cef-disable-gpu -cef-disable-gpu-compositing -applaunch 5$' || fail "args da Steam: $o"
 o=$(KB_RUNTIME="$T/echo" "$KB" run b2 'C:\jogo.exe' -x 2>/dev/null)
 echo "$o" | grep -q -- '-cef' && fail "só a Steam leva -cef: $o"
 

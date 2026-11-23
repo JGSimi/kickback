@@ -292,7 +292,7 @@ final class Model: ObservableObject {
     func launchSteamGame(_ app: String, name: String, in b: String) {
         status = "Abrindo \(name) pela Steam em “\(b)”… Se a Steam pedir, entre na sua conta."
         Task {
-            let rc = await kb(["run", b, steamExe(b).path, "-applaunch", app])
+            let rc = await kb(["run", b, steamExe(b).path, "-silent", "-applaunch", app])
             status = rc == 0 ? "\(name): pedido enviado à Steam." : "A Steam terminou com erro \(rc) (veja o log)."
         }
     }
