@@ -254,6 +254,10 @@ final class Model: ObservableObject {
     // MARK: executar
 
     func open(_ url: URL) {
+        if url.pathExtension.lowercased() == "app" {
+            if !openCrossOverLauncher(url) { status = "Isso é um app do Mac, não um programa do Windows." }
+            return
+        }
         Task {
             if selected == nil {
                 await kb(["create", "Padrão"])
@@ -278,12 +282,43 @@ final class Model: ObservableObject {
     }
 
     func open(_ p: Program) {
-        guard let app = p.steamApp, let b = selected else { open(p.id); return }
-        status = "Abrindo \(p.name) pela Steam em “\(b)”…"
+        guard let b = selected else { open(p.id); return }
+        // o atalho “Steam” do Menu Iniciar abre pelo Steam.exe, que o kb lança com as opções certas
+        if p.steamApp == nil, p.name.lowercased() == "steam", hasSteam(b) { open(steamExe(b)); return }
+        guard let app = p.steamApp else { open(p.id); return }
+        launchSteamGame(app, name: p.name, in: b)
+    }
+
+    func launchSteamGame(_ app: String, name: String, in b: String) {
+        status = "Abrindo \(name) pela Steam em “\(b)”… Se a Steam pedir, entre na sua conta."
         Task {
             let rc = await kb(["run", b, steamExe(b).path, "-applaunch", app])
-            status = rc == 0 ? "Steam fechada." : "A Steam terminou com erro \(rc) (veja o log)."
+            status = rc == 0 ? "\(name): pedido enviado à Steam." : "A Steam terminou com erro \(rc) (veja o log)."
         }
+    }
+
+    /// Atalho .app que o CrossOver cria em ~/Applications/CrossOver: abre o mesmo jogo da Steam numa garrafa importada.
+    func openCrossOverLauncher(_ url: URL) -> Bool {
+        guard let info = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
+              let cxBottle = info["CXHelperAppBottleName"] as? String else { return false }
+        let name = info["CXOriginalMenuName"] as? String ?? url.deletingPathExtension().lastPathComponent
+        let cmd = (info["CrossOverHelperCommand"] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+        let text = (try? String(contentsOfFile: cmd, encoding: .utf8)) ?? ""
+        guard let r = text.range(of: #"rungameid/(\d+)"#, options: .regularExpression) else {
+            status = "“\(name)” é um atalho do CrossOver. Importe a garrafa “\(cxBottle)” e abra o programa pela biblioteca."
+            return true
+        }
+        let app = String(text[r].dropFirst("rungameid/".count))
+        // garrafa importada daquela do CrossOver (mesmo nome ou “nome (CrossOver)”) que tenha a Steam
+        let candidates = bottles.filter { ($0 == cxBottle || $0.hasPrefix("\(cxBottle) (CrossOver")) && hasSteam($0) }
+        guard let b = candidates.first else {
+            status = "“\(name)” está na garrafa “\(cxBottle)” do CrossOver. Importe essa garrafa primeiro (Arquivo → Importar do CrossOver…)."
+            showImport = true
+            return true
+        }
+        selected = b
+        launchSteamGame(app, name: name, in: b)
+        return true
     }
 
     func runBuiltin(_ exe: String) {

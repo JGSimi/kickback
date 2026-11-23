@@ -101,4 +101,12 @@ KB_RUNTIME="$T/st" KB_STEAM_URL="file://$T/SteamSetup.exe" "$KB" install-steam s
 [ -f "$KB_HOME/bottles/st/prefix/drive_c/Program Files (x86)/Steam/Steam.exe" ] || fail "steam.exe"
 KB_RUNTIME="$T/st" KB_STEAM_URL="file:///nada" "$KB" install-steam st >/dev/null 2>&1 || fail "já instalada não baixa de novo"
 
+# Steam abre com o CEF sem GPU (senão não aparece janela com DXMT); outros exe não
+mkrt "$T/echo" lib/dxmt/x86_64-windows/d3d11.dll lib/wine/x86_64-unix/cxcompatdb.so
+printf '#!/bin/sh\necho "ARGS $*"\n' > "$T/echo/bin/wineloader"; chmod +x "$T/echo/bin/wineloader"
+o=$(KB_RUNTIME="$T/echo" "$KB" run b2 'C:\Program Files (x86)\Steam\Steam.exe' -applaunch 5 2>/dev/null)
+echo "$o" | grep -q 'ARGS .*Steam.exe -applaunch 5 -cef-disable-gpu -cef-disable-gpu-compositing$' || fail "args da Steam: $o"
+o=$(KB_RUNTIME="$T/echo" "$KB" run b2 'C:\jogo.exe' -x 2>/dev/null)
+echo "$o" | grep -q -- '-cef' && fail "só a Steam leva -cef: $o"
+
 echo OK

@@ -164,6 +164,12 @@ case "$cmd" in
     [ $# -ge 2 ] || usage
     setup_env "$1"; exe=$2; shift 2
     apply_backend "$exe"
+    case "$(printf %s "${exe##*[\\/]}" | tr '[:upper:]' '[:lower:]')" in steam.exe)
+      # As telas da Steam (CEF/ANGLE) pedem swapchain D3D11 entre processos, que o DXMT não tem
+      # ("cross-process swapchain not supported yet"): a Steam roda sem nenhuma janela. Sem GPU no CEF ela
+      # desenha por software; os jogos abertos por ela continuam com o backend normal.
+      set -- "$@" -cef-disable-gpu -cef-disable-gpu-compositing
+    esac
     [ -f "$exe" ] && cd "$(dirname "$exe")"   # muitos jogos assumem cwd = pasta do exe
     exec "$WINELOADER" "$exe" ${@+"$@"}
     ;;
